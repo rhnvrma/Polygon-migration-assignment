@@ -138,6 +138,15 @@ REDIS_HOST = os.getenv("REDIS_HOST")
 REDIS_PORT = os.getenv("REDIS_PORT")
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
 REDIS_SSL = os.getenv("REDIS_SSL")
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": f"redis://{REDIS_HOST}:{REDIS_PORT}/1",
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+        }
+    }
+}
 
 LOGGING = {
     'version': 1,
