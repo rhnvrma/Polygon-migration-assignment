@@ -5,12 +5,13 @@ import string
 import requests
 from urllib.parse import urlencode
 from django.conf import settings
+from django_redis import get_redis_connection
 import json
 import os
 import sys
 import zipfile
 import tempfile
-import redis
+# import redis
 import logging
 import shutil
 import subprocess
@@ -94,7 +95,20 @@ class PolygonAPI:
         
         try:
             response = requests.post(f"{self.API_URL}{method_name}", data=post_params)
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except requests.exceptions.HTTPError as http_err:
+                error_details = response.text
+                try:
+                    # Polygon often returns JSON even on error status codes
+                    error_json = response.json()
+                    if 'comment' in error_json:
+                        error_details = error_json['comment']
+                except json.JSONDecodeError:
+                    pass # Keep the raw text if it's not JSON
+                
+                logger.error(f"Polygon API HTTP Error {response.status_code}: {error_details}")
+                raise Exception(f"Polygon API HTTP Error {response.status_code}: {error_details}") from http_err
 
             if not expect_json:
                 return response.text
@@ -111,6 +125,8 @@ class PolygonAPI:
                 return response.text
 
         except requests.exceptions.RequestException as e:
+            # Catch connection errors (DNS, Timeout, Refused) separately from HTTP status errors
+            logger.error(f"Network Connection Error: {e}")
             raise Exception(f"HTTP Request Error: {e}")
 
     def _make_plain_request(self, method_name, params=None):
@@ -820,17 +836,7 @@ class PolygonAPI:
         pattern = f"oj_dev_with_redis_storage_test_cases_{db_problem_id}*"
         logger.info("pattern %s", pattern)
         try:
-            REDIS_HOST = settings.REDIS_HOST
-            REDIS_PORT = settings.REDIS_PORT
-            REDIS_PASSWORD = settings.REDIS_PASSWORD
-            REDIS_SSL = settings.REDIS_SSL
-            r = redis.StrictRedis(
-                host=REDIS_HOST,
-                port=REDIS_PORT,
-                password=REDIS_PASSWORD,
-                ssl=REDIS_SSL,
-                ssl_cert_reqs=None
-            )
+            r=get_redis_connection("default")
             for key in r.scan_iter(pattern):
                 logger.info("deleting key %s", key)
                 r.delete(key)
@@ -849,17 +855,7 @@ class PolygonAPI:
             expiry_hours (float): Expiry time in hours (default 0.5 = 30 minutes).
         """
         try:
-            REDIS_HOST = settings.REDIS_HOST
-            REDIS_PORT = settings.REDIS_PORT
-            REDIS_PASSWORD = settings.REDIS_PASSWORD
-            REDIS_SSL = settings.REDIS_SSL
-            r = redis.StrictRedis(
-                host=REDIS_HOST,
-                port=REDIS_PORT,
-                password=REDIS_PASSWORD,
-                ssl=REDIS_SSL,
-                ssl_cert_reqs=None
-            )
+            r=get_redis_connection("default")
             
             # Platform-specific prefix for this application
             prefix = f"polygon_migration_test_cases_{polygon_id}"
@@ -896,17 +892,7 @@ class PolygonAPI:
             list: List of test case dictionaries, or None if not found or error.
         """
         try:
-            REDIS_HOST = settings.REDIS_HOST
-            REDIS_PORT = settings.REDIS_PORT
-            REDIS_PASSWORD = settings.REDIS_PASSWORD
-            REDIS_SSL = settings.REDIS_SSL
-            r = redis.StrictRedis(
-                host=REDIS_HOST,
-                port=REDIS_PORT,
-                password=REDIS_PASSWORD,
-                ssl=REDIS_SSL,
-                ssl_cert_reqs=None
-            )
+            r=get_redis_connection("default")
             
             # Platform-specific prefix for this application
             prefix = f"polygon_migration_test_cases_{polygon_id}"
@@ -948,17 +934,7 @@ class PolygonAPI:
             polygon_id (str): The Polygon problem ID.
         """
         try:
-            REDIS_HOST = settings.REDIS_HOST
-            REDIS_PORT = settings.REDIS_PORT
-            REDIS_PASSWORD = settings.REDIS_PASSWORD
-            REDIS_SSL = settings.REDIS_SSL
-            r = redis.StrictRedis(
-                host=REDIS_HOST,
-                port=REDIS_PORT,
-                password=REDIS_PASSWORD,
-                ssl=REDIS_SSL,
-                ssl_cert_reqs=None
-            )
+            r=get_redis_connection("default")
             
             # Platform-specific prefix for this application
             prefix = f"polygon_migration_test_cases_{polygon_id}"

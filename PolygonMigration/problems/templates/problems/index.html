@@ -386,6 +386,7 @@
         // Initialize display if the section exists
         if (selectedTagsSection) {
             updateSelectedTagsDisplay();
+            updateHiddenInputs();
         }
         
         // Handle difficulty dropdown
@@ -469,7 +470,8 @@
     
     // Handle search input
     function handleSearch() {
-        var query = searchInput.value.toLowerCase().trim();
+        var rawQuery = searchInput.value.trim();
+        var query = rawQuery.toLowerCase();
         var filteredTags = [];
         
         if (query) {
@@ -484,14 +486,14 @@
                 }
             });
             
-            // Add "Add new tag" option if query doesn't match any existing tag
+            // Add "Add new tag" option if query doesn't match any existing tag exactly
             var exactMatch = filteredTags.some(function(tag) {
                 return tag.name.toLowerCase() === query;
             });
             
-            if (!exactMatch && query.length > 0) {
+            if (!exactMatch && rawQuery.length > 0) {
                 filteredTags.push({
-                    name: query,
+                    name: rawQuery, // Use rawQuery to preserve case (e.g., "DP")
                     id: null,
                     isExisting: false
                 });
@@ -512,6 +514,7 @@
     }
     
     // Populate dropdown with filtered tags
+    // Populate dropdown with filtered tags
     function populateDropdown(tags) {
         dropdown.innerHTML = '';
         
@@ -527,8 +530,11 @@
             var checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
             checkbox.checked = selectedTags.has(tag.name);
+            
+            // Handle checkbox click specifically
             checkbox.addEventListener('change', function() {
                 toggleTag(tag.name);
+                searchInput.focus(); // Keep focus
             });
             
             var label = document.createElement('span');
@@ -541,8 +547,16 @@
             // Add click handler for the entire option
             option.addEventListener('click', function(e) {
                 if (e.target !== checkbox) {
+                    // If clicking the text/row, toggle the logic
+                    // We don't need to manually toggle checkbox.checked here because 
+                    // re-populating or UI update will handle state, but for visual feedback:
                     checkbox.checked = !checkbox.checked;
                     toggleTag(tag.name);
+                    
+                    // UX Improvement: Clear search and reset dropdown
+                    searchInput.value = '';
+                    searchInput.focus();
+                    handleSearch(); // Refresh dropdown (shows all tags)
                 }
             });
             
@@ -551,13 +565,25 @@
     }
     
     // Toggle tag selection
+    // Toggle tag selection
     function toggleTag(tagName) {
         if (selectedTags.has(tagName)) {
             selectedTags.delete(tagName);
         } else {
             selectedTags.add(tagName);
+            var existsInGlobal = allTags.some(function(t) { 
+                return t.fields.name === tagName; 
+            });
+            
+            if (!existsInGlobal) {
+                allTags.push({
+                    pk: null, // New tags don't have a DB ID yet
+                    fields: { name: tagName }
+                });
+            }
         }
         updateSelectedTagsDisplay();
+        updateHiddenInputs();
     }
     
     // Update the selected tags display
