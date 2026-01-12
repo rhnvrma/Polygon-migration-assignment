@@ -220,14 +220,8 @@ def index(request):
                         
                         logger.info('Calling migrate_to_azure_blob')
                         try:
-                            api.migrate_to_azure_blob(
+                            api.migrate_to_gdrive(
                                 polygon_id,
-                                AZURE_STORAGE_ACCOUNT_URL,
-                                AZURE_TENANT_ID,
-                                AZURE_CLIENT_ID,
-                                AZURE_USERNAME,
-                                AZURE_PASSWORD,
-                                AZURE_CONTAINER_NAME,
                                 problem_id
                             )
                             azure_blob_uploaded = True
@@ -564,8 +558,8 @@ def index(request):
                 logger.error('Exception in index view: %s', e, exc_info=True)
                 context['error'] = f"Migration failed and all changes have been rolled back. Reason: {str(e)}"
                 # Compensate for Azure: attempt to delete any uploaded blobs if azure_blob_uploaded is True (pseudo-code)
-                if azure_blob_uploaded and azure_blob_problem_id:
-                    api.delete_azure_blob(azure_blob_problem_id)
+                # if azure_blob_uploaded and azure_blob_problem_id:
+                    # api.delete_azure_blob(azure_blob_problem_id)
                 # Compensate for Redis: clear any cached test cases if needed
                 api.clear_test_cases_from_redis(polygon_id)
 

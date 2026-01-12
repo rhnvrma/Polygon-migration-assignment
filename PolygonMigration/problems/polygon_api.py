@@ -1,4 +1,5 @@
 import hashlib
+import re
 import time
 import random
 import string
@@ -284,7 +285,11 @@ class PolygonAPI:
             dict: The problem statements as returned by the API.
         """
         logger.info("Fetching statements for %s", problem_id)
-        return self._make_request('problem.statements', {'problemId': problem_id})
+        response_json=self._make_request('problem.statements', {'problemId': problem_id})
+        keys=response_json.keys()
+        if "english" in keys:
+            return response_json["english"]
+        return response_json[list(keys)[0]]
 
     def get_test_script(self, problem_id, testset='tests'):
         """
@@ -858,7 +863,158 @@ class PolygonAPI:
         )
         logger.info("Completed custom checker processing for problem %s", problem_id)
         logger.info("Completed migrate_to_azure_blob for problem %s", problem_id)
+    def upload_custom_checker_to_gdrive(self, problem_id, db_problem_id=None):
+        """
+        Fetches, compiles, and uploads custom checker to Google Drive.
+        
+        Args:
+            problem_id (str): The Polygon problem ID.
+            db_problem_id (str, optional): The database problem ID for naming.
+        """
+        from problems.g_drive import GDriveManager
+        # Initialize GDrive Manager
+        # (Assuming GDriveManager class is imported or available in scope)
+        gdrive_manager = GDriveManager()
+        
+        logger.info("Processing custom checker for problem %s (GDrive)", problem_id)
+        
+        # Get custom checker info
+        checker_info = self.get_custom_checker_info(problem_id)
+        if not checker_info:
+            logger.info("No custom checker found for problem %s", problem_id)
+            return
+        
+        # Fetch custom checker source code
+        source_code = self.fetch_custom_checker_file(problem_id, checker_info['name'])
+        if not source_code:
+            logger.error("Failed to fetch custom checker source code")
+            return
 
+        # Determine the ID to use for the folder name
+        problem_id_for_naming = db_problem_id if db_problem_id is not None else problem_id
+        
+        # Use CUSTOM_CHECKER_DIR from environment if available
+        checker_dir = settings.CUSTOM_CHECKER_DIR
+        
+        if checker_dir:
+            if not os.path.exists(checker_dir):
+                os.makedirs(checker_dir, exist_ok=True)
+            temp_dir = checker_dir
+
+            # Compile the custom checker
+            binary_path = self.compile_custom_checker(source_code, temp_dir)
+            
+            if not binary_path:
+                logger.warning("Failed to compile custom checker, uploading source code instead")
+                # Fallback: Upload source code (.cpp)
+                try:
+                    gdrive_manager.upload_file(
+                        db_problem_id=problem_id_for_naming,
+                        file_name="custom_checker.cpp",
+                        content=source_code
+                    )
+                    return
+                except Exception as e:
+                    logger.error(f"Error uploading custom checker source code: {e}")
+                    return
+            
+            logger.info("Custom checker compiled successfully at: %s", binary_path)
+            
+            # Read the compiled binary
+            try:
+                with open(binary_path, 'rb') as f:
+                    binary_data = f.read()
+                logger.info("Binary file read successfully, size: %d bytes", len(binary_data))
+            except Exception as e:
+                logger.error(f"Error reading compiled binary: {e}")
+                return
+            
+            # Determine filename based on OS
+            blob_filename = 'custom_checker.exe' if sys.platform.startswith('win') else 'custom_checker'
+            
+            # Upload Binary
+            try:
+                gdrive_manager.upload_file(
+                    db_problem_id=problem_id_for_naming,
+                    file_name=blob_filename,
+                    content=binary_data
+                )
+                logger.info(f"Successfully uploaded custom checker binary to GDrive folder {problem_id_for_naming}")
+            except Exception as e:
+                logger.error(f"Error uploading custom checker binary: {e}")
+
+        else:
+            # Fallback to temporary directory logic (same logic, just wrapped in TempDir)
+            with tempfile.TemporaryDirectory() as temp_dir:
+                binary_path = self.compile_custom_checker(source_code, temp_dir)
+                if not binary_path:
+                    # Upload source as fallback
+                    gdrive_manager.upload_file(problem_id_for_naming, "custom_checker.cpp", source_code)
+                    return
+                
+                with open(binary_path, 'rb') as f:
+                    binary_data = f.read()
+                
+                blob_filename = 'custom_checker.exe' if sys.platform.startswith('win') else 'custom_checker'
+                
+                gdrive_manager.upload_file(problem_id_for_naming, blob_filename, binary_data)
+                logger.info(f"Successfully uploaded custom checker to GDrive folder {problem_id_for_naming}")
+
+
+    def migrate_to_gdrive(self, problem_id, db_problem_id=None, testset='tests'):
+        """
+        Fetches all test cases and uploads them to Google Drive.
+        """
+        logger.info("Starting migrate_to_gdrive for problem %s", problem_id)
+
+        # 1. Fetch Test Cases (Redis -> Polygon Fallback)
+        test_cases = self.get_test_cases_from_redis(problem_id)
+        if test_cases is None:
+            logger.warning('Test cases not found in Redis, fetching from Polygon')
+            test_cases = self.get_all_test_cases(problem_id, testset)
+            self.store_test_cases_in_redis(problem_id, test_cases, expiry_hours=0.5)
+        else:
+            logger.info('Retrieved test cases from Redis')
+        
+        logger.info("Retrieved %d test cases for GDrive migration", len(test_cases))
+        from problems.g_drive import GDriveManager
+        # 2. Initialize GDrive Manager
+        gdrive_manager = GDriveManager()
+        
+        problem_id_for_naming = db_problem_id if db_problem_id is not None else problem_id
+        
+        # 3. Clean up existing folder
+        logger.info("Deleting existing test cases from GDrive")
+        gdrive_manager.empty_blob(problem_id_for_naming)
+
+        # 4. Upload new test cases
+        uploaded_count = 0
+        cases=[]
+        for idx, test in enumerate(test_cases, start=1):
+            input_data = test.get('input', '')
+            output_data = test.get('output', '')
+            
+            if input_data and output_data:
+                gdrive_manager.upload_test_case(
+                    db_problem_id=problem_id_for_naming,
+                    test_number=idx,
+                    input_data=input_data,
+                    output_data=output_data
+                )
+                cases.append({'input': input_data, 'output': output_data})
+                uploaded_count += 1
+            else:
+                logger.warning(f"Skipping test case #{idx}: missing input or output.")
+        # gdrive_manager.upload_batch_test_cases(problem_id_for_naming,cases)
+        logger.info("Uploaded %d test cases to GDrive", uploaded_count)
+        
+        # 5. Handle Custom Checker
+        logger.info("Starting custom checker processing for problem %s", problem_id)
+        self.upload_custom_checker_to_gdrive(
+            problem_id=problem_id,
+            db_problem_id=db_problem_id
+        )
+        logger.info("Completed migrate_to_gdrive for problem %s", problem_id)
     def delete_problem_test_case_cache(self, db_problem_id):
         """
         Deletes all Redis cache keys related to test cases for a given database problem ID.
