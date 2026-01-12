@@ -156,8 +156,8 @@ def index(request):
                     main_solution = None
                     try:
                         # Get solutions using Polygon API
-                        update_working_copy = api._make_request('problem.updateWorkingCopy', {'problemId': polygon_id})
-                        logger.debug('Updated working copy: %s', update_working_copy)
+                        # update_working_copy = api._make_request('problem.updateWorkingCopy', {'problemId': polygon_id})
+                        # logger.debug('Updated working copy: %s', update_working_copy)
                         solutions = api._make_request('problem.solutions', {'problemId': polygon_id})
                         logger.debug('Fetched solutions: %s', solutions)
                         if solutions:
@@ -250,10 +250,10 @@ def index(request):
                     logger.debug('Polygon problem info: %s', info)
                     
                     # Download and extract the problem package, then parse problem.html
-                    problem_html_content = api.download_and_extract_package(polygon_id)
-                    logger.debug('Downloaded and extracted problem_html_content, length: %d', len(problem_html_content))
-                    html_data = parse_problem_html(problem_html_content)
-                    logger.debug('Parsed html_data: %s', html_data)
+                    
+                    
+                    html_data =  api.get_statements(polygon_id)
+                    # logger.debug('Parsed html_data: %s', html_data)
                     
 
                     # Fetch all test cases for display
@@ -294,11 +294,11 @@ def index(request):
                     context['all_test_cases'] = display_test_cases
                     
                     # Prepare problem data for display
-                    title = html_data['title'] or info.get('name', f'Polygon Problem {polygon_id}')
+                    title =  html_data['name']
                     slug = slugify(title)
                     problem_statement = html_data['legend']
-                    input_format = html_data['input_format']
-                    output_format = html_data['output_format']
+                    input_format = html_data['input']
+                    output_format = html_data['output']
                     constraints = ''
                     editorial = ''
                     time_limit = info.get('timeLimit', 1000)
@@ -319,7 +319,7 @@ def index(request):
                     # Get custom checker info for display
                     custom_checker_info = api.get_custom_checker_info(polygon_id)
                     
-                    test_case_count = len(api.get_test_cases(polygon_id))
+                    test_case_count = len(all_test_cases)
                     logger.debug('test_case_count=%d', test_case_count)
                     
                     # Store fetched data in context for display (without database operations)
@@ -401,41 +401,37 @@ def index(request):
                             if custom_checker_info:
                                 context['db_success'] += f" Custom checker '{custom_checker_info['name']}' detected."
 
-                        # Handle tags
-                        logger.info('Processing tags for problem')
-                        logger.debug('Selected tags before processing: %s', selected_tags)
-                        logger.debug('New tag before processing: %s', new_tag)
-                        
+                        # Process tags for DB migration (legacy spot, but also handled below for universality if we move it out)
+                        # To be safe and universal, we can process tags for ALL actions if problem_obj exists.
+                        # I will keep it here effectively, but let's see if we can move it up or duplicate safely.
+                        # The plan was to make it universal. Let's do that by ensuring we have a problem_obj.
+                    
+                    # Universal Tag Processing (Run if problem_obj exists/was created and tags are present)
+                    # We need to re-fetch or ensure problem_obj is set if we didn't just migrate to DB
+                    if not migrate_to_db:
+                         problem_obj = Problem.objects.filter(polygon_id=polygon_id).first()
+                    
+                    if problem_obj and (selected_tags or new_tag):
+                        logger.info('Processing tags for problem (Universal)')
                         # Clear existing tags
                         problem_obj.extra_tags.clear()
-                        logger.debug('Cleared existing tags for problem %s', problem_obj.id)
                         
                         # Process selected tags
                         for tag_name in selected_tags:
                             if tag_name.strip():
-                                logger.debug('Processing tag: %s', tag_name)
                                 tag, created = ProblemTag.objects.get_or_create(tag_name=tag_name.strip())
                                 problem_obj.extra_tags.add(tag)
-                                if created:
-                                    logger.info('Created new tag: %s', tag_name)
-                                else:
-                                    logger.debug('Added existing tag: %s', tag_name)
                         
                         # Process new tag if provided
                         if new_tag:
-                            logger.debug('Processing new tag: %s', new_tag)
                             new_tag_obj, created = ProblemTag.objects.get_or_create(tag_name=new_tag)
                             problem_obj.extra_tags.add(new_tag_obj)
-                            if created:
-                                logger.info('Created new tag from input: %s', new_tag)
-                            else:
-                                logger.debug('Added existing tag from input: %s', new_tag)
                         
-                        # Update context with current tags for display
+                        # Update context
                         final_tags = [tag.tag_name for tag in problem_obj.extra_tags.all()]
                         context['selected_tags'] = final_tags
-                        logger.debug('Final tags after processing: %s', final_tags)
 
+                    if migrate_to_db:
                         # Get test cases from Redis instead of fetching from Polygon again
                         test_cases = api.get_test_cases_from_redis(polygon_id)
                         if test_cases is None:

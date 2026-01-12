@@ -366,7 +366,6 @@
     var selectedTags = new Set({{ selected_tags_json|safe }});
     var searchInput, dropdown, selectedTagsSection, hiddenContainer;
     
-    // Initialize the tags interface
     document.addEventListener('DOMContentLoaded', function() {
         // Initialize elements
         searchInput = document.getElementById('tags-search-input');
@@ -374,40 +373,61 @@
         selectedTagsSection = document.getElementById('selected-tags-section');
         hiddenContainer = document.getElementById('hidden-tags-container');
         
-        // Set up event listeners ONLY IF the elements exist
         if (searchInput) {
             searchInput.addEventListener('input', handleSearch);
             searchInput.addEventListener('focus', showDropdown);
-            searchInput.addEventListener('blur', function() {
-                setTimeout(hideDropdown, 200);
+            
+            // Enter key support
+            searchInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    var rawVal = searchInput.value.trim();
+                    if (rawVal) {
+                        toggleTag(rawVal);
+                        searchInput.value = ''; 
+                        handleSearch();
+                    }
+                }
+            });
+
+            // Close dropdown when clicking outside
+            document.addEventListener('click', function(e) {
+                if (dropdown && searchInput && !dropdown.contains(e.target) && !searchInput.contains(e.target)) {
+                    hideDropdown();
+                }
             });
         }
         
-        // Initialize display if the section exists
         if (selectedTagsSection) {
             updateSelectedTagsDisplay();
             updateHiddenInputs();
         }
         
-        // Handle difficulty dropdown
+        // Difficulty and Forms logic
         var select = document.getElementById('difficulty-select');
         var hidden = document.getElementById('difficulty-hidden');
         if (select && hidden) {
-            select.addEventListener('change', function() {
-                hidden.value = select.value;
-            });
+            select.addEventListener('change', function() { hidden.value = select.value; });
             hidden.value = select.value;
         }
         
-        // Handle migrate to DB form
+        setupFormListeners();
+        
+        // Hide loading if page loaded with data
+        {% if fetched_problem or error or success or db_success %}
+            hideLoading();
+        {% endif %}
+    });
+
+    function setupFormListeners() {
         var migrateForm = document.getElementById('migrate-db-form');
         if (migrateForm) {
             migrateForm.addEventListener('submit', function(e) {
-                var difficultySelect = document.getElementById('difficulty-select');
-                if (difficultySelect && !difficultySelect.value) {
+                var diff = document.getElementById('difficulty-select');
+                if (diff && !diff.value) {
                     e.preventDefault();
-                    alert('Please select a difficulty level before submitting.');
-                    difficultySelect.focus();
+                    alert('Please select a difficulty level.');
+                    diff.focus();
                     return false;
                 }
                 updateHiddenInputs();
@@ -415,97 +435,43 @@
             });
         }
         
-        // Handle fetch form submission to show loading
         var fetchForm = document.getElementById('fetchForm');
         if (fetchForm) {
             fetchForm.addEventListener('submit', function(e) {
-                // This is the fix for the original spinner problem
                 e.preventDefault(); 
-                showLoading('Fetching problem data and test cases (may take 3-4 minutes)...');
+                showLoading('Fetching problem data...');
                 setTimeout(() => fetchForm.submit(), 50);
             });
         }
-        
-        // Handle migrate to Azure form
+
         var azureForm = document.getElementById('migrate-azure-form');
-        if (azureForm) {
-            azureForm.addEventListener('submit', function() {
-                showLoading('Migrating to Azure...');
-            });
-        }
-        
-        // Handle migrate test cases to database form
+        if (azureForm) azureForm.addEventListener('submit', () => showLoading('Migrating to Azure...'));
+
         var testCasesForm = document.getElementById('migrate-test-cases-form');
-        if (testCasesForm) {
-            testCasesForm.addEventListener('submit', function() {
-                showLoading('Migrating test cases to database...');
-            });
-        }
-        
-        // Hide loading if page loads with results (indicating successful fetch)
-        {% if fetched_problem or error or success or db_success %}
-            hideLoading();
-        {% endif %}
-    });
-    
-    // Show loading overlay
-    function showLoading(message) {
-        var overlay = document.getElementById('loadingOverlay');
-        var loadingText = document.querySelector('.loading-text');
-        if (overlay) {
-            if (loadingText && message) {
-                loadingText.textContent = message;
-            }
-            overlay.style.display = 'flex';
-        }
+        if (testCasesForm) testCasesForm.addEventListener('submit', () => showLoading('Migrating test cases...'));
     }
     
-    // Hide loading overlay
-    function hideLoading() {
-        var overlay = document.getElementById('loadingOverlay');
-        if (overlay) {
-            overlay.style.display = 'none';
-        }
-    }
+    // --- TAGS LOGIC ---
     
-    // Handle search input
     function handleSearch() {
         var rawQuery = searchInput.value.trim();
         var query = rawQuery.toLowerCase();
         var filteredTags = [];
         
         if (query) {
-            // Filter existing tags
             allTags.forEach(function(tag) {
                 if (tag.fields.name.toLowerCase().includes(query)) {
-                    filteredTags.push({
-                        name: tag.fields.name,
-                        id: tag.pk,
-                        isExisting: true
-                    });
+                    filteredTags.push({ name: tag.fields.name, id: tag.pk, isExisting: true });
                 }
             });
             
-            // Add "Add new tag" option if query doesn't match any existing tag exactly
-            var exactMatch = filteredTags.some(function(tag) {
-                return tag.name.toLowerCase() === query;
-            });
-            
+            var exactMatch = filteredTags.some(t => t.name.toLowerCase() === query);
             if (!exactMatch && rawQuery.length > 0) {
-                filteredTags.push({
-                    name: rawQuery, // Use rawQuery to preserve case (e.g., "DP")
-                    id: null,
-                    isExisting: false
-                });
+                filteredTags.push({ name: rawQuery, id: null, isExisting: false });
             }
         } else {
-            // Show all existing tags when search is empty
             allTags.forEach(function(tag) {
-                filteredTags.push({
-                    name: tag.fields.name,
-                    id: tag.pk,
-                    isExisting: true
-                });
+                filteredTags.push({ name: tag.fields.name, id: tag.pk, isExisting: true });
             });
         }
         
@@ -513,11 +479,8 @@
         showDropdown();
     }
     
-    // Populate dropdown with filtered tags
-    // Populate dropdown with filtered tags
     function populateDropdown(tags) {
         dropdown.innerHTML = '';
-        
         if (tags.length === 0) {
             dropdown.innerHTML = '<div class="tag-option"><span class="text-muted">No tags found</span></div>';
             return;
@@ -530,11 +493,9 @@
             var checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
             checkbox.checked = selectedTags.has(tag.name);
-            
-            // Handle checkbox click specifically
             checkbox.addEventListener('change', function() {
                 toggleTag(tag.name);
-                searchInput.focus(); // Keep focus
+                searchInput.focus(); 
             });
             
             var label = document.createElement('span');
@@ -544,19 +505,16 @@
             option.appendChild(checkbox);
             option.appendChild(label);
             
-            // Add click handler for the entire option
             option.addEventListener('click', function(e) {
                 if (e.target !== checkbox) {
-                    // If clicking the text/row, toggle the logic
-                    // We don't need to manually toggle checkbox.checked here because 
-                    // re-populating or UI update will handle state, but for visual feedback:
                     checkbox.checked = !checkbox.checked;
                     toggleTag(tag.name);
-                    
-                    // UX Improvement: Clear search and reset dropdown
-                    searchInput.value = '';
-                    searchInput.focus();
-                    handleSearch(); // Refresh dropdown (shows all tags)
+                    if (!tag.isExisting) {
+                        searchInput.value = '';
+                        handleSearch();
+                    } else {
+                        searchInput.focus();
+                    }
                 }
             });
             
@@ -564,37 +522,53 @@
         });
     }
     
-    // Toggle tag selection
-    // Toggle tag selection
     function toggleTag(tagName) {
         if (selectedTags.has(tagName)) {
-            selectedTags.delete(tagName);
+            // If already selected, use removeTag logic to handle cleanup
+            removeTag(tagName);
         } else {
+            // Selecting
             selectedTags.add(tagName);
-            var existsInGlobal = allTags.some(function(t) { 
-                return t.fields.name === tagName; 
-            });
             
+            // Check if exists in global
+            var existsInGlobal = allTags.some(t => t.fields.name === tagName);
+            
+            // If not, add to global as temporary (pk: null)
             if (!existsInGlobal) {
-                allTags.push({
-                    pk: null, // New tags don't have a DB ID yet
-                    fields: { name: tagName }
-                });
+                allTags.push({ pk: null, fields: { name: tagName } });
             }
+            
+            updateSelectedTagsDisplay();
+            updateHiddenInputs();
         }
-        updateSelectedTagsDisplay();
-        updateHiddenInputs();
     }
     
-    // Update the selected tags display
+    function removeTag(tagName) {
+        selectedTags.delete(tagName);
+        
+        // --- CLEANUP LOGIC ---
+        // If this was a custom/new tag (pk is null), remove it from allTags.
+        // This prevents typos or unwanted custom tags from reappearing in the dropdown list.
+        var tagIndex = allTags.findIndex(t => t.fields.name === tagName);
+        if (tagIndex !== -1 && allTags[tagIndex].pk === null) {
+            allTags.splice(tagIndex, 1);
+        }
+
+        updateSelectedTagsDisplay();
+        updateHiddenInputs();
+        
+        // If dropdown is open, refresh it immediately to remove the checkmark or the custom option
+        if (dropdown.style.display === 'block') {
+             handleSearch();
+        }
+    }
+    
     function updateSelectedTagsDisplay() {
         selectedTagsSection.innerHTML = '';
-        
         if (selectedTags.size === 0) {
             selectedTagsSection.innerHTML = '<span class="text-muted">No tags selected</span>';
             return;
         }
-        
         selectedTags.forEach(function(tagName) {
             var tagElement = document.createElement('span');
             tagElement.className = 'selected-tag-item';
@@ -603,24 +577,8 @@
         });
     }
     
-    // Remove a tag
-    function removeTag(tagName) {
-        selectedTags.delete(tagName);
-        updateSelectedTagsDisplay();
-        updateHiddenInputs();
-        
-        // Update dropdown checkboxes
-        var checkboxes = dropdown.querySelectorAll('input[type="checkbox"]');
-        checkboxes.forEach(function(checkbox) {
-            var label = checkbox.nextElementSibling;
-            if (label.textContent === tagName || label.textContent === 'Add "' + tagName + '"') {
-                checkbox.checked = false;
-            }
-        });
-    }
-    
-    // Update hidden inputs for form submission
     function updateHiddenInputs() {
+        if (!hiddenContainer) return;
         hiddenContainer.innerHTML = '';
         selectedTags.forEach(function(tagName) {
             var input = document.createElement('input');
@@ -631,21 +589,28 @@
         });
     }
     
-    // Show dropdown
     function showDropdown() {
-        if (dropdown.children.length > 0) {
-            dropdown.style.display = 'block';
-        }
+        if (dropdown.children.length > 0) dropdown.style.display = 'block';
     }
     
-    // Hide dropdown
     function hideDropdown() {
         dropdown.style.display = 'none';
     }
+
+    // UI Helpers
+    function showLoading(msg) {
+        var overlay = document.getElementById('loadingOverlay');
+        if (overlay) {
+            document.querySelector('.loading-text').textContent = msg || 'Loading...';
+            overlay.style.display = 'flex';
+        }
+    }
+    function hideLoading() {
+        var overlay = document.getElementById('loadingOverlay');
+        if (overlay) overlay.style.display = 'none';
+    }
     
-    // Show full content in a modal
     function showFullContent(type, content) {
-        // Create modal if it doesn't exist
         var modal = document.getElementById('contentModal');
         if (!modal) {
             modal = document.createElement('div');
@@ -654,51 +619,26 @@
             modal.innerHTML = `
                 <div class="modal-dialog modal-lg">
                     <div class="modal-content">
-                        <div class="modal-header">
-                            <h5 class="modal-title" id="modalTitle">Full Content</h5>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                        </div>
-                        <div class="modal-body">
-                            <pre id="modalContent" style="max-height: 400px; overflow-y: auto;"></pre>
-                        </div>
-                        <div class="modal-footer">
-                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                            <button type="button" class="btn btn-primary" onclick="copyModalContent()">Copy to Clipboard</button>
-                        </div>
+                        <div class="modal-header"><h5 class="modal-title" id="modalTitle">Full Content</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                        <div class="modal-body"><pre id="modalContent" style="max-height: 400px; overflow-y: auto;"></pre></div>
+                        <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Close</button><button class="btn btn-primary" onclick="copyModalContent()">Copy</button></div>
                     </div>
-                </div>
-            `;
+                </div>`;
             document.body.appendChild(modal);
         }
-        
-        // Set content and show modal
         document.getElementById('modalContent').textContent = content;
         document.getElementById('modalTitle').textContent = type.charAt(0).toUpperCase() + type.slice(1) + ' Content';
-        
-        var modalInstance = new bootstrap.Modal(modal);
-        modalInstance.show();
+        new bootstrap.Modal(modal).show();
     }
     
-    // Copy modal content to clipboard
     function copyModalContent() {
-        const content = document.getElementById('modalContent').textContent;
-        navigator.clipboard.writeText(content).then(function() {
-            // Show success message
-            var copyBtn = document.querySelector('#contentModal .btn-primary');
-            var originalText = copyBtn.textContent;
-            copyBtn.textContent = 'Copied!';
-            copyBtn.classList.remove('btn-primary');
-            copyBtn.classList.add('btn-success');
-            
-            setTimeout(function() {
-                copyBtn.textContent = originalText;
-                copyBtn.classList.remove('btn-success');
-                copyBtn.classList.add('btn-primary');
-            }, 2000);
-        }).catch(function(err) {
-            alert('Failed to copy: ' + err);
+        navigator.clipboard.writeText(document.getElementById('modalContent').textContent).then(() => {
+            var btn = document.querySelector('#contentModal .btn-primary');
+            btn.textContent = 'Copied!';
+            btn.className = 'btn btn-success';
+            setTimeout(() => { btn.textContent = 'Copy'; btn.className = 'btn btn-primary'; }, 2000);
         });
     }
-    </script>
+</script>
 </body>
 </html>

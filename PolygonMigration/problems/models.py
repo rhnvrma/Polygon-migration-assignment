@@ -55,7 +55,7 @@ class Problem(models.Model):
     ]
     polygon_id = models.CharField(max_length=100, unique=True, blank=True)
     title = models.CharField(max_length=255)
-    slug = models.SlugField(unique=True, max_length=255)
+    slug = models.SlugField( max_length=255)
     difficulty = models.CharField(max_length=10, choices=DIFFICULTY_CHOICES)
     avg_time_taken = models.FloatField(default=30.0)
     total_submissions = models.IntegerField(default=0)

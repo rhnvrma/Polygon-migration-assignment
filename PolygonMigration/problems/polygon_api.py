@@ -6,6 +6,8 @@ import requests
 from urllib.parse import urlencode
 from django.conf import settings
 from django_redis import get_redis_connection
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import json
 import os
 import sys
@@ -364,63 +366,94 @@ class PolygonAPI:
         except Exception:
             return f"File {file_name} not found or could not be fetched."
 
-    def get_all_test_cases(self, problem_id, testset='tests'):
+
+    def get_all_test_cases(self, problem_id, testset='tests', max_workers=10):
         """
-        Fetches all test cases (manual and generated) for a given problem from Polygon.
-        For all tests, fetches input/output using problem.testInput and problem.testAnswer.
+        Fetches all test cases (manual and generated) for a given problem from Polygon
+        in parallel.
 
         Args:
             problem_id (str): The Polygon problem ID.
             testset (str, optional): The testset name. Defaults to 'tests'.
+            max_workers (int, optional): Number of parallel threads.
 
         Returns:
-            list: A list of dicts with 'input', 'output', 'index', 'manual', and other fields for each test case.
+            list: A list of dicts with 'input', 'output', 'index', 'manual', etc.
         """
-        logger.info("Fetching all test cases for %s, testset", problem_id)
-        tests = self._make_request('problem.tests', {'problemId': problem_id, 'testset': testset})
-        all_cases = []
-        
+        logger.info("Fetching all test cases for %s, testset=%s", problem_id, testset)
+
+        tests = self._make_request(
+            'problem.tests',
+            {'problemId': problem_id, 'testset': testset}
+        )
+
         logger.info("Found %d test cases to process", len(tests))
-        
-        for test in tests:
+
+        def fetch_single_test(test):
             test_index = test['index']
-            logger.info("Processing test case %d/%d (index: %s)", len(all_cases) + 1, len(tests), test_index)
-            
+            logger.info("Processing test case index=%s", test_index)
+
             test_case = {
                 'index': test_index,
                 'manual': test.get('manual', False),
                 'is_sample': test.get('useInStatements', False),
                 'description': test.get('description', '')
             }
-            
-            # For all tests, fetch input and output using the API
+
             try:
                 logger.debug("Fetching input for test case %s", test_index)
-                test_case['input'] = self._make_plain_request('problem.testInput', {
-                    'problemId': problem_id,
-                    'testset': testset,
-                    'testIndex': test_index
-                }) or ''
-                
+                test_case['input'] = self._make_plain_request(
+                    'problem.testInput',
+                    {
+                        'problemId': problem_id,
+                        'testset': testset,
+                        'testIndex': test_index
+                    }
+                ) or ''
+
                 logger.debug("Fetching output for test case %s", test_index)
-                test_case['output'] = self._make_plain_request('problem.testAnswer', {
-                    'problemId': problem_id,
-                    'testset': testset,
-                    'testIndex': test_index
-                }) or ''
-                
-                logger.info("Successfully fetched test case %s - Input length: %d, Output length: %d", 
-                          test_index, len(test_case['input']), len(test_case['output']))
-                
+                test_case['output'] = self._make_plain_request(
+                    'problem.testAnswer',
+                    {
+                        'problemId': problem_id,
+                        'testset': testset,
+                        'testIndex': test_index
+                    }
+                ) or ''
+
+                logger.info(
+                    "Fetched test %s (input=%d, output=%d)",
+                    test_index,
+                    len(test_case['input']),
+                    len(test_case['output'])
+                )
+
             except Exception as e:
-                logger.warning(f"Error fetching test case {test_index}: {e}")
+                logger.warning("Error fetching test case %s: %s", test_index, e)
                 test_case['input'] = ''
                 test_case['output'] = ''
-            
-            all_cases.append(test_case)
-        
-        logger.info("Completed fetching all %d test cases for problem %s", len(all_cases), problem_id)
+
+            return test_case
+
+        all_cases = []
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(fetch_single_test, test) for test in tests]
+
+            for future in as_completed(futures):
+                all_cases.append(future.result())
+
+        # Optional: keep original order by test index
+        all_cases.sort(key=lambda x: x['index'])
+
+        logger.info(
+            "Completed fetching all %d test cases for problem %s",
+            len(all_cases),
+            problem_id
+        )
+
         return all_cases
+
 
     def get_custom_checker_info(self, problem_id):
         """
